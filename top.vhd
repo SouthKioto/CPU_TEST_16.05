@@ -2,6 +2,55 @@ library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
+-- =============================================================
+-- TOP-LEVEL: ALU + Plik Rejestrow + busint + RAM + HEX
+--
+-- Przyciski (aktywne NISKIE na DE1/DE2):
+--   KEY[0] - reczny zegar CLK
+--   KEY[1] - reset asynchroniczny (zeruje wszystkie rejestry)
+--
+-- Nowe mapowanie przelacznikow:
+--
+--   SW[3:0] - S_ALU : kod operacji ALU
+--   SW[5:4] - Sbb   : wybor rejestru BB (arg1 ALU)
+--                     00=rA, 01=rB, 10=rC, 11=DI
+--   SW[7:6] - Sbc   : wybor rejestru BC (arg2 ALU)
+--                     00=rA, 01=rB, 10=rC, 11=DI
+--   SW[8]   - WEN   : 1 = zapisz wynik ALU do rejestru docelowego
+--                     (zapis nastepuje na zbocze KEY[0])
+--   SW[9]   - DST   : wybor rejestru docelowego zapisu
+--                     0=rA, 1=rB
+--
+-- Wyjscia HEX:
+--   HEX1..HEX0 - wynik ALU [7:0]   (2 cyfry hex)
+--   HEX3..HEX2 - wynik ALU [15:8]  (2 cyfry hex)
+--   HEX4       - flagi {C, Z, S, P}
+--   HEX5       - kod operacji S_ALU
+--
+-- Wyjscia LED:
+--   LEDR[0] = P  flaga parzystosci
+--   LEDR[1] = S  flaga znaku
+--   LEDR[2] = Z  flaga zera
+--   LEDR[3] = C  flaga przeniesienia
+--   LEDR[4] = WEN aktywny (zapis do rejestru)
+--   LEDR[5] = DST (0=rA, 1=rB)
+--   LEDR[7:6] = Sbb (wybrany rejestr BB)
+--   LEDR[9:8] = Sbc (wybrany rejestr BC)
+--
+-- Przyklad uzycia - dodawanie 7 + 2:
+--   1. Wpisz 7 do rA:
+--      SW = 0100000111  (DST=0=rA, WEN=1, Sbc=00, Sbb=11=DI, S_ALU=0111=PASS BB)
+--      KEY[0]: 1->0->1  (zbocze = zapis rA=7)
+--   2. Wpisz 2 do rB:
+--      SW = 1100000001  (DST=1=rB, WEN=1, Sbc=00, Sbb=11=DI, S_ALU=0001=PASS BC)
+--      UWAGA: tu DI=SW[3:0]=0010, ale PASS BC bierze BC...
+--      Latwiej: SW = 1100110010 (DST=rB, WEN=1, Sbc=11=DI, Sbb=00, S_ALU=0001=PASS BC)
+--      KEY[0]: 1->0->1
+--   3. Oblicz rA + rB:
+--      SW = 0001010010  (DST=rA, WEN=0, Sbc=01=rB, Sbb=00=rA, S_ALU=0010=ADD)
+--      HEX pokazuje wynik na biezaco bez wciskania KEY
+-- =============================================================
+
 entity top is
     port (
         SW   : in  std_logic_vector(9 downto 0);
@@ -24,6 +73,7 @@ architecture rtl of top is
 
     component alu is
         port (
+            clk   : in  std_logic;
             BB    : in  std_logic_vector(15 downto 0);
             BC    : in  std_logic_vector(15 downto 0);
             S_ALU : in  std_logic_vector(3 downto 0);
@@ -40,6 +90,7 @@ architecture rtl of top is
     component register_cpu is
         port (
             clk   : in  std_logic;
+            reset : in  std_logic;
             DI    : in  signed(15 downto 0);
             BA    : in  signed(15 downto 0);
             Sbb   : in  signed(3 downto 0);
@@ -90,105 +141,117 @@ architecture rtl of top is
     end component;
 
     ----------------------------------------------------------------
-    -- SYGNA?Y
+    -- SYGNALY
     ----------------------------------------------------------------
 
-    signal clk  : std_logic;
-    signal mode : std_logic_vector(1 downto 0);
+    signal clk   : std_logic;
+    signal reset : std_logic;
 
-    -- rejestry
-    signal reg_BB   : signed(15 downto 0);
-    signal reg_BC   : signed(15 downto 0);
-    signal reg_ADR  : signed(31 downto 0);
-    signal reg_IR   : signed(15 downto 0);
-    signal reg_DI   : signed(15 downto 0);
-    signal reg_BA   : signed(15 downto 0);
+    -- sterowanie
+    signal wen   : std_logic;                    -- SW[8]: write enable
+    signal dst   : std_logic;                    -- SW[9]: rejestr docelowy
+    signal s_sbb : std_logic_vector(1 downto 0); -- SW[5:4]: wybor BB
+    signal s_sbc : std_logic_vector(1 downto 0); -- SW[7:6]: wybor BC
 
-    signal reg_Sbb  : signed(3 downto 0);
-    signal reg_Sbc  : signed(3 downto 0);
-    signal reg_Sba  : signed(3 downto 0);
-    signal reg_Sid  : signed(2 downto 0);
-    signal reg_Sa   : signed(1 downto 0);
+    -- plik rejestrow
+    signal reg_BB  : signed(15 downto 0);
+    signal reg_BC  : signed(15 downto 0);
+    signal reg_ADR : signed(31 downto 0);
+    signal reg_IR  : signed(15 downto 0);
+    signal reg_DI  : signed(15 downto 0);
+    signal reg_BA  : signed(15 downto 0);
+    signal reg_Sbb : signed(3 downto 0);
+    signal reg_Sbc : signed(3 downto 0);
+    signal reg_Sba : signed(3 downto 0);
+    signal reg_Sid : signed(2 downto 0);
+    signal reg_Sa  : signed(1 downto 0);
 
     -- ALU
     signal alu_BB : std_logic_vector(15 downto 0);
     signal alu_BC : std_logic_vector(15 downto 0);
     signal alu_Y  : std_logic_vector(15 downto 0);
-
     signal alu_C  : std_logic;
     signal alu_Z  : std_logic;
     signal alu_S  : std_logic;
     signal alu_P  : std_logic;
 
-    -- busint
-    signal bus_DO    : signed(15 downto 0);
-    signal bus_Smar  : std_logic;
-    signal bus_Smbr  : std_logic;
-    signal bus_WRin  : std_logic;
-    signal bus_RDin  : std_logic;
-
-    signal bus_AD    : signed(31 downto 0);
-    signal bus_D     : signed(15 downto 0);
-    signal bus_DI    : signed(15 downto 0);
-
-    signal bus_WR    : std_logic;
-    signal bus_RD    : std_logic;
-
-    signal phys_addr : std_logic_vector(9 downto 0);
-
-    -- RAM
+    -- busint (nieuzywany aktywnie, ale podlaczony)
+    signal bus_AD   : signed(31 downto 0);
+    signal bus_D    : signed(15 downto 0);
+    signal bus_DI   : signed(15 downto 0);
+    signal bus_WR   : std_logic;
+    signal bus_RD   : std_logic;
+    signal phys_addr: std_logic_vector(9 downto 0);
     signal ram_data_out : std_logic_vector(15 downto 0);
 
-    -- display
-    signal display_data : std_logic_vector(15 downto 0);
+    -- flagi
     signal flags_nibble : std_logic_vector(3 downto 0);
-
-    signal hex4_in : std_logic_vector(3 downto 0);
-    signal hex5_in : std_logic_vector(3 downto 0);
 
 begin
 
     ----------------------------------------------------------------
-    -- ZEGAR
+    -- ZEGAR I RESET
     ----------------------------------------------------------------
 
-    clk  <= not KEY(0);
-    mode <= SW(9 downto 8);
+    clk   <= not KEY(0);   -- KEY aktywny NISKI
+    reset <= not KEY(1);
 
     ----------------------------------------------------------------
-    -- STEROWANIE REJESTRAMI
+    -- DEKODOWANIE PRZELACZNIKOW
     ----------------------------------------------------------------
 
-    reg_Sbb <= signed(SW(7 downto 4));
-    reg_Sbc <= "0011";
-    reg_Sba <= "0010";
+    wen   <= SW(8);
+    dst   <= SW(9);
+    s_sbb <= SW(5 downto 4);
+    s_sbc <= SW(7 downto 6);
+
+    -- DI: dane z przelacznikow SW[3:0] rozszerzone do 16-bit
+    -- uzywane gdy Sbb lub Sbc = "11" (DI)
+    reg_DI <= signed(x"000" & SW(3 downto 0));
+
+    ----------------------------------------------------------------
+    -- Sbb: wybor rejestru BB (arg1 ALU)
+    --   00 -> 0010 = rA
+    --   01 -> 0011 = rB
+    --   10 -> 0100 = rC
+    --   11 -> 0000 = DI (dane z SW[3:0])
+    ----------------------------------------------------------------
+    reg_Sbb <= "0010" when s_sbb = "00" else
+               "0011" when s_sbb = "01" else
+               "0100" when s_sbb = "10" else
+               "0000";  -- DI
+
+    ----------------------------------------------------------------
+    -- Sbc: wybor rejestru BC (arg2 ALU)
+    --   00 -> 0010 = rA
+    --   01 -> 0011 = rB
+    --   10 -> 0100 = rC
+    --   11 -> 0000 = DI (dane z SW[3:0])
+    ----------------------------------------------------------------
+    reg_Sbc <= "0010" when s_sbc = "00" else
+               "0011" when s_sbc = "01" else
+               "0100" when s_sbc = "10" else
+               "0000";  -- DI
+
+    ----------------------------------------------------------------
+    -- Sba: rejestr docelowy zapisu
+    -- Zapis tylko gdy WEN=1, inaczej wskazuje na ATMP (ukryty)
+    --   WEN=1, DST=0 -> 0010 = rA
+    --   WEN=1, DST=1 -> 0011 = rB
+    --   WEN=0        -> 1111 = ATMP (ukryty, nie psuje rejestrow)
+    ----------------------------------------------------------------
+    reg_Sba <= "0010" when (wen = '1' and dst = '0') else
+               "0011" when (wen = '1' and dst = '1') else
+               "1111";  -- ATMP - zapis niewidoczny dla uzytkownika
+
+    -- BA: wynik ALU idzie do rejestru docelowego
+    reg_BA  <= signed(alu_Y);
+
+    -- Sid: brak inkrementacji
     reg_Sid <= "000";
+
+    -- Sa: ADR = AD
     reg_Sa  <= "00";
-
-    ----------------------------------------------------------------
-    -- BA
-    ----------------------------------------------------------------
-
-    reg_BA <= signed(alu_Y) when mode = "00" else
-              to_signed(to_integer(unsigned(SW(7 downto 0))), 16) when mode = "01" else
-              bus_DI when mode = "10" else
-              to_signed(to_integer(unsigned(SW(7 downto 0))), 16);
-
-    reg_DI <= to_signed(to_integer(unsigned(SW(7 downto 0))), 16);
-
-    ----------------------------------------------------------------
-    -- BUSINT
-    ----------------------------------------------------------------
-
-    bus_DO <= reg_BB;
-
-    bus_Smar <= '1' when (mode = "01" or mode = "10") else '0';
-
-    bus_Smbr <= '1' when mode = "01" else '0';
-
-    bus_WRin <= '1' when mode = "01" else '0';
-
-    bus_RDin <= '1' when mode = "10" else '0';
 
     ----------------------------------------------------------------
     -- KONWERSJE
@@ -197,17 +260,17 @@ begin
     alu_BB <= std_logic_vector(reg_BB);
     alu_BC <= std_logic_vector(reg_BC);
 
-    bus_D <= signed(ram_data_out)
-             when bus_RD = '1'
-             else (others => 'Z');
+    -- busint szyna D (nieaktywna w trybie ALU)
+    bus_D <= (others => 'Z');
 
     ----------------------------------------------------------------
-    -- REGISTER FILE
+    -- INSTANCJE
     ----------------------------------------------------------------
 
     U_REGS : register_cpu
         port map (
             clk   => clk,
+            reset => reset,
             DI    => reg_DI,
             BA    => reg_BA,
             Sbb   => reg_Sbb,
@@ -221,12 +284,9 @@ begin
             IRout => reg_IR
         );
 
-    ----------------------------------------------------------------
-    -- ALU
-    ----------------------------------------------------------------
-
     U_ALU : alu
         port map (
+            clk   => clk,
             BB    => alu_BB,
             BC    => alu_BC,
             S_ALU => SW(3 downto 0),
@@ -239,19 +299,15 @@ begin
             P     => alu_P
         );
 
-    ----------------------------------------------------------------
-    -- BUS INTERFACE
-    ----------------------------------------------------------------
-
     U_BUSINT : busint
         port map (
             clk           => clk,
             ADR           => reg_ADR,
-            DO            => bus_DO,
-            Smar          => bus_Smar,
-            Smbr          => bus_Smbr,
-            WRin          => bus_WRin,
-            RDin          => bus_RDin,
+            DO            => reg_BB,
+            Smar          => '0',
+            Smbr          => '0',
+            WRin          => '0',
+            RDin          => '0',
             AD            => bus_AD,
             D             => bus_D,
             DI            => bus_DI,
@@ -259,10 +315,6 @@ begin
             RD            => bus_RD,
             phys_addr_out => phys_addr
         );
-
-    ----------------------------------------------------------------
-    -- RAM
-    ----------------------------------------------------------------
 
     U_RAM : ram
         port map (
@@ -274,74 +326,36 @@ begin
         );
 
     ----------------------------------------------------------------
-    -- DISPLAY DATA
+    -- FLAGI
     ----------------------------------------------------------------
-
-    display_data <= alu_Y when mode = "00" else
-                    x"00" & SW(7 downto 0) when mode = "01" else
-                    ram_data_out when mode = "10" else
-                    std_logic_vector(reg_BB);
 
     flags_nibble <= alu_C & alu_Z & alu_S & alu_P;
-
-    ----------------------------------------------------------------
-    -- HEX4 / HEX5 MUX
-    ----------------------------------------------------------------
-
-    hex4_in <= flags_nibble
-               when (mode = "00" or mode = "11")
-               else phys_addr(3 downto 0);
-
-    hex5_in <= SW(3 downto 0)
-               when (mode = "00" or mode = "11")
-               else phys_addr(7 downto 4);
 
     ----------------------------------------------------------------
     -- LED
     ----------------------------------------------------------------
 
-    LEDR(7 downto 0) <= display_data(7 downto 0);
-    LEDR(8)          <= bus_WR;
-    LEDR(9)          <= bus_RD;
+    LEDR(0) <= alu_P;
+    LEDR(1) <= alu_S;
+    LEDR(2) <= alu_Z;
+    LEDR(3) <= alu_C;
+    LEDR(4) <= wen;
+    LEDR(5) <= dst;
+    LEDR(7 downto 6) <= s_sbb;
+    LEDR(9 downto 8) <= s_sbc;
 
     ----------------------------------------------------------------
-    -- HEX DISPLAY
+    -- WYSWIETLACZE HEX
+    -- HEX3..HEX0 - wynik ALU (16-bit)
+    -- HEX4       - flagi {C,Z,S,P}
+    -- HEX5       - kod operacji S_ALU
     ----------------------------------------------------------------
 
-    U_HEX0 : hex_display
-        port map (
-            hex_in  => display_data(3 downto 0),
-            seg_out => HEX0
-        );
-
-    U_HEX1 : hex_display
-        port map (
-            hex_in  => display_data(7 downto 4),
-            seg_out => HEX1
-        );
-
-    U_HEX2 : hex_display
-        port map (
-            hex_in  => display_data(11 downto 8),
-            seg_out => HEX2
-        );
-
-    U_HEX3 : hex_display
-        port map (
-            hex_in  => display_data(15 downto 12),
-            seg_out => HEX3
-        );
-
-    U_HEX4 : hex_display
-        port map (
-            hex_in  => hex4_in,
-            seg_out => HEX4
-        );
-
-    U_HEX5 : hex_display
-        port map (
-            hex_in  => hex5_in,
-            seg_out => HEX5
-        );
+    U_HEX0 : hex_display port map (hex_in => alu_Y(3  downto 0),  seg_out => HEX0);
+    U_HEX1 : hex_display port map (hex_in => alu_Y(7  downto 4),  seg_out => HEX1);
+    U_HEX2 : hex_display port map (hex_in => alu_Y(11 downto 8),  seg_out => HEX2);
+    U_HEX3 : hex_display port map (hex_in => alu_Y(15 downto 12), seg_out => HEX3);
+    U_HEX4 : hex_display port map (hex_in => flags_nibble,         seg_out => HEX4);
+    U_HEX5 : hex_display port map (hex_in => SW(3 downto 0),       seg_out => HEX5);
 
 end architecture rtl;

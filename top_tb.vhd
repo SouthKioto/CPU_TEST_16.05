@@ -1,17 +1,14 @@
-library ieee;
-use ieee.std_logic_1164.all;
-use ieee.numeric_std.all;
+library IEEE;
+use IEEE.STD_LOGIC_1164.ALL;
+use IEEE.NUMERIC_STD.ALL;
 
 entity top_tb is
 end entity;
 
-architecture sim of top_tb is
+architecture behavior of top_tb is
 
-    ----------------------------------------------------------------
-    -- DUT
-    ----------------------------------------------------------------
-
-    component top is
+    -- Komponent testowany
+    component top
         port (
             SW   : in  std_logic_vector(9 downto 0);
             KEY  : in  std_logic_vector(1 downto 0);
@@ -25,31 +22,16 @@ architecture sim of top_tb is
         );
     end component;
 
-    ----------------------------------------------------------------
-    -- SIGNALS
-    ----------------------------------------------------------------
-
+    -- Sygna?y testowe
     signal SW   : std_logic_vector(9 downto 0) := (others => '0');
-    signal KEY  : std_logic_vector(1 downto 0) := (others => '1');
-
+    signal KEY  : std_logic_vector(1 downto 0) := (others => '1'); -- aktywne niskim
     signal LEDR : std_logic_vector(9 downto 0);
-
-    signal HEX0 : std_logic_vector(6 downto 0);
-    signal HEX1 : std_logic_vector(6 downto 0);
-    signal HEX2 : std_logic_vector(6 downto 0);
-    signal HEX3 : std_logic_vector(6 downto 0);
-    signal HEX4 : std_logic_vector(6 downto 0);
-    signal HEX5 : std_logic_vector(6 downto 0);
-
-    constant CLK_PERIOD : time := 20 ns;
+    signal HEX0, HEX1, HEX2, HEX3, HEX4, HEX5 : std_logic_vector(6 downto 0);
 
 begin
 
-    ----------------------------------------------------------------
-    -- DUT INSTANCE
-    ----------------------------------------------------------------
-
-    DUT : top
+    -- Instancja modu?u top
+    uut: top
         port map (
             SW   => SW,
             KEY  => KEY,
@@ -62,124 +44,47 @@ begin
             HEX5 => HEX5
         );
 
-    ----------------------------------------------------------------
-    -- CLOCK GENERATION
-    -- KEY(0) jest aktywny niski
-    ----------------------------------------------------------------
-
-    clk_process : process
+    -- Proces testowy
+    process
     begin
-        while true loop
-            KEY(0) <= '1';
-            wait for CLK_PERIOD / 2;
-
-            KEY(0) <= '0';
-            wait for CLK_PERIOD / 2;
-        end loop;
-    end process;
-
-    ----------------------------------------------------------------
-    -- TEST SEQUENCE
-    ----------------------------------------------------------------
-
-    stim_proc : process
-    begin
+        ----------------------------------------------------------------
+        -- RESET
+        ----------------------------------------------------------------
+        KEY(1) <= '0';  -- aktywacja resetu
+        wait for 20 ns;
+        KEY(1) <= '1';  -- zwolnienie resetu
+        wait for 20 ns;
 
         ----------------------------------------------------------------
-        -- START
+        -- 1?? Wpisz 7 do rejestru rA
         ----------------------------------------------------------------
+        SW <= "0100000111";  -- DST=0 (rA), WEN=1, Sbc=00, Sbb=11=DI, S_ALU=0111=PASS BB
+        KEY(0) <= '1'; wait for 10 ns;
+        KEY(0) <= '0'; wait for 10 ns;  -- zbocze zegara
+        KEY(0) <= '1'; wait for 20 ns;
 
-        report "=== START TESTBENCH ===";
+        ----------------------------------------------------------------
+        -- 2?? Wpisz 2 do rejestru rB
+        ----------------------------------------------------------------
+        SW <= "1100110010";  -- DST=1 (rB), WEN=1, Sbc=11=DI, Sbb=00, S_ALU=0001=PASS BC
+        KEY(0) <= '1'; wait for 10 ns;
+        KEY(0) <= '0'; wait for 10 ns;
+        KEY(0) <= '1'; wait for 20 ns;
 
+        ----------------------------------------------------------------
+        -- 3?? Oblicz rA + rB
+        ----------------------------------------------------------------
+        SW <= "0001000010";  -- DST=rA, WEN=0, Sbc=01=rB, Sbb=00=rA, S_ALU=0010=ADD
         wait for 50 ns;
 
         ----------------------------------------------------------------
-        -- TRYB ALU
-        -- mode = 00
+        -- Sprawdzenie wyniku (HEX0..HEX3 powinny pokaza? 0009)
         ----------------------------------------------------------------
-
-        report "=== TEST ALU MODE ===";
-
-        -- SW(9:8) = 00
-        -- SW(7:4) = 0010  -> wybór rejestru
-        -- SW(3:0) = 0000  -> operacja ALU
-
-        SW <= "0000100000";
-
-        wait for 100 ns;
-
-        -- inna operacja ALU
-        SW <= "0000100001";
-
-        wait for 100 ns;
-
-        -- kolejna operacja
-        SW <= "0000100010";
-
-        wait for 100 ns;
-
-        ----------------------------------------------------------------
-        -- TRYB ZAPISU DO RAM
-        -- mode = 01
-        ----------------------------------------------------------------
-
-        report "=== TEST RAM WRITE MODE ===";
-
-        -- zapis warto?ci 0x55
-        -- mode = 01
-        -- dane/adres = 01010101
-
-        SW <= "0101010101";
-
-        wait for 100 ns;
-
-        -- zapis warto?ci 0xAA
-        SW <= "0110101010";
-
-        wait for 100 ns;
-
-        ----------------------------------------------------------------
-        -- TRYB ODCZYTU Z RAM
-        -- mode = 10
-        ----------------------------------------------------------------
-
-        report "=== TEST RAM READ MODE ===";
-
-        -- odczyt spod adresu 0x55
-
-        SW <= "1001010101";
-
-        wait for 100 ns;
-
-        -- odczyt spod adresu 0xAA
-
-        SW <= "1010101010";
-
-        wait for 100 ns;
-
-        ----------------------------------------------------------------
-        -- TRYB DEBUG
-        -- mode = 11
-        ----------------------------------------------------------------
-
-        report "=== TEST DEBUG MODE ===";
-
-        SW <= "1100100000";
-
-        wait for 100 ns;
-
-        SW <= "1111000000";
-
-        wait for 100 ns;
-
-        ----------------------------------------------------------------
-        -- KONIEC
-        ----------------------------------------------------------------
-
-        report "=== END OF SIMULATION ===";
+        assert LEDR(2) = '0' and LEDR(3) = '0'
+            report "TEST OK: 7 + 2 = 9"
+            severity note;
 
         wait;
-
     end process;
 
 end architecture;

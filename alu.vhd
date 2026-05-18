@@ -6,6 +6,7 @@ use IEEE.NUMERIC_STD.ALL;
 -- LAB 1: Jednostka Arytmetyczno-Logiczna (ALU) - 16-bit
 --
 -- Wejscia:
+--   clk   - zegar systemowy
 --   BB    - argument 1 (16-bit), z szyny B pliku rejestrow
 --   BC    - argument 2 (16-bit), z szyny C pliku rejestrow
 --   S_ALU - kod operacji (4-bit)
@@ -40,6 +41,7 @@ use IEEE.NUMERIC_STD.ALL;
 
 entity alu is
     Port (
+        clk   : in  STD_LOGIC;
         BB    : in  STD_LOGIC_VECTOR(15 downto 0);
         BC    : in  STD_LOGIC_VECTOR(15 downto 0);
         S_ALU : in  STD_LOGIC_VECTOR(3 downto 0);
@@ -65,6 +67,10 @@ architecture Behavioral of alu is
 
 begin
 
+    -- --------------------------------------------------------
+    -- Proces kombinacyjny: obliczenie wyniku
+    -- Wyzwalany zmiana wejsc (asynchroniczny)
+    -- --------------------------------------------------------
     process(BB, BC, S_ALU, C_in)
         variable v_BB   : unsigned(15 downto 0);
         variable v_BC   : unsigned(15 downto 0);
@@ -72,9 +78,9 @@ begin
         variable v_res  : STD_LOGIC_VECTOR(15 downto 0);
         variable v_cout : STD_LOGIC;
     begin
-        v_BB  := unsigned(BB);
-        v_BC  := unsigned(BC);
-        v_res := (others => '0');
+        v_BB   := unsigned(BB);
+        v_BC   := unsigned(BC);
+        v_res  := (others => '0');
         v_cout := '0';
 
         case S_ALU is
@@ -113,7 +119,7 @@ begin
                 v_res  := BB xor BC;
                 v_cout := '0';
 
-            when "0111" =>                          -- XNOR (rownowaznos)
+            when "0111" =>                          -- XNOR
                 v_res  := BB xnor BC;
                 v_cout := '0';
 
@@ -121,7 +127,7 @@ begin
                 v_res  := not BB;
                 v_cout := '0';
 
-            when "1001" =>                          -- NEG (dopelnienie do 2)
+            when "1001" =>                          -- NEG
                 v_sum  := ('0' & (not v_BB)) + 1;
                 v_res  := STD_LOGIC_VECTOR(v_sum(15 downto 0));
                 v_cout := v_sum(16);
@@ -130,12 +136,12 @@ begin
                 v_res  := (others => '0');
                 v_cout := '0';
 
-            when "1011" =>                          -- ADC (dodawanie z przeniesieniem)
+            when "1011" =>                          -- ADC
                 v_sum  := ('0' & v_BB) + ('0' & v_BC) + (x"0000" & C_in);
                 v_res  := STD_LOGIC_VECTOR(v_sum(15 downto 0));
                 v_cout := v_sum(16);
 
-            when "1100" =>                          -- SBB (odejmowanie z pozyczka)
+            when "1100" =>                          -- SBB
                 v_sum  := ('0' & v_BB) - ('0' & v_BC) - (x"0000" & C_in);
                 v_res  := STD_LOGIC_VECTOR(v_sum(15 downto 0));
                 if v_BB < (v_BC + ("000000000000000" & C_in)) then
@@ -167,16 +173,14 @@ begin
         carry_out <= v_cout;
     end process;
 
-    -- Flaga Zero
+    -- --------------------------------------------------------
+    -- Generowanie flag (kombinacyjne)
+    -- --------------------------------------------------------
+
     flag_Z <= '1' when result = x"0000" else '0';
-
-    -- Flaga Sign (najstarszy bit = liczba ujemna w U2)
     flag_S <= result(15);
-
-    -- Flaga Carry
     flag_C <= carry_out;
 
-    -- Flaga Parity (P=1 gdy parzysta liczba jedynek)
     parity_xor <= result(0)  xor result(1)  xor result(2)  xor result(3)
                xor result(4)  xor result(5)  xor result(6)  xor result(7)
                xor result(8)  xor result(9)  xor result(10) xor result(11)
@@ -188,7 +192,6 @@ begin
     S <= flag_S;
     P <= flag_P;
 
-    -- S_F=0: wyjscie = wynik; S_F=1: wyjscie = flagi {C,Z,S,P} na bitach 3:0
     Y <= result when S_F = '0' else
          (15 downto 4 => '0') & flag_C & flag_Z & flag_S & flag_P;
 

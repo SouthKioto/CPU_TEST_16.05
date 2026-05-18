@@ -3,31 +3,12 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 -- =============================================================
--- LAB 3: Pamiec RAM
+-- LAB 3: Pamiec RAM z inicjalizacja w VHDL
+-- (wartosci zgodne z ram_init.mif)
 --
--- Oparty na przykladzie z dokumentacji laboratorium (ram1).
--- Rozszerzony do 16-bit slowa i adresu 10-bit.
---
--- Parametry:
---   - 1024 slowa (adres 10-bit: 0..1023)
---   - slowo 16-bitowe
---   - synchroniczny zapis (zbocze rosnace clk)
---   - asynchroniczny odczyt
---
--- Mapa pamieci (segmentacja 4 x 256 slow):
---   Segment 0: adresy   0..255   (0x000..0x0FF)
---   Segment 1: adresy 256..511   (0x100..0x1FF)
---   Segment 2: adresy 512..767   (0x200..0x2FF)
---   Segment 3: adresy 768..1023  (0x300..0x3FF)
---
--- Wejscia:
---   clk     - zegar
---   we      - write enable (1=zapis)
---   address - adres (10-bit)
---   data    - dane do zapisu (16-bit)
---
--- Wyjscia:
---   q       - dane odczytane (16-bit)
+-- ModelSim Starter Edition nie obsluguje atrybutu ram_init_file
+-- dlatego inicjalizacja jest bezposrednio w kodzie VHDL.
+-- Na plytce Quartus uzywa MIF automatycznie.
 -- =============================================================
 
 entity ram is
@@ -44,17 +25,23 @@ architecture rtl of ram is
 
     type mem_type is array(0 to 1023) of std_logic_vector(15 downto 0);
 
-    -- Inicjalizacja z przykladowymi wartosciami testowymi
     signal ram_block : mem_type := (
-        0   => x"0001",
-        1   => x"0002",
-        2   => x"0003",
-        3   => x"ABCD",
-        4   => x"1234",
-        5   => x"FFFF",
-        256 => x"0010",
-        512 => x"0020",
-        768 => x"0030",
+        -- Segment 0: stale programu
+        0   => x"0007",   -- adres 0 = 7        (argument 1 dodawania)
+        1   => x"0002",   -- adres 1 = 2        (argument 2 dodawania)
+        2   => x"0009",   -- adres 2 = 9        (oczekiwany wynik 7+2)
+        3   => x"000F",   -- adres 3 = 15       (max warto?? 4-bitowa)
+        4   => x"00FF",   -- adres 4 = 255      (max warto?? 8-bitowa)
+        5   => x"7FFF",   -- adres 5 = 32767    (max warto?? dodatnia 16-bit)
+        6   => x"8000",   -- adres 6 = -32768   (test flagi znaku S)
+        7   => x"0000",   -- adres 7 = 0        (test flagi zera Z)
+        -- Segment 1
+        256 => x"0010",   -- adres 100h = 16
+        -- Segment 2
+        512 => x"0020",   -- adres 200h = 32
+        -- Segment 3
+        768 => x"0030",   -- adres 300h = 48
+        -- reszta: zera
         others => x"0000"
     );
 

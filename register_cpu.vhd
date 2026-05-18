@@ -3,17 +3,19 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 -- =============================================================
--- LAB 2: Plik rejestrow procesora
+-- LAB 2: Plik rejestrow procesora (z resetem asynchronicznym)
 --
 -- Wejscia:
---   clk  - zegar systemowy
---   DI   - dane wejsciowe z magistrali danych (16-bit)
---   BA   - dane do zapisu do rejestru (16-bit, z ALU lub szyny)
---   Sbb  - selektor wyjscia BB - szyna B dla ALU (4-bit)
---   Sbc  - selektor wyjscia BC - szyna C dla ALU (4-bit)
---   Sba  - selektor rejestru docelowego zapisu przez BA (4-bit)
---   Sid  - selektor operacji inkrementacji/dekrementacji (3-bit)
---   Sa   - selektor wyjscia adresowego ADR (2-bit)
+--   clk   - zegar systemowy
+--   reset - reset asynchroniczny aktywny WYSOKI
+--           (podlaczone do not KEY[1] w top.vhd)
+--   DI    - dane wejsciowe z magistrali danych (16-bit)
+--   BA    - dane do zapisu do rejestru (16-bit)
+--   Sbb   - selektor wyjscia BB (4-bit)
+--   Sbc   - selektor wyjscia BC (4-bit)
+--   Sba   - selektor rejestru docelowego zapisu (4-bit)
+--   Sid   - selektor inkrementacji/dekrementacji (3-bit)
+--   Sa    - selektor wyjscia adresowego (2-bit)
 --
 -- Wyjscia:
 --   BB    - szyna B: argument 1 dla ALU (16-bit)
@@ -36,16 +38,17 @@ use ieee.numeric_std.all;
 --   1011=SP[15:0]  1100=SP[31:16]
 --   1101=AD[15:0]  1110=ATMP[15:0]  1111=ATMP[31:16]
 --
--- Mapa Sid (inkrementacja/dekrementacja):
+-- Mapa Sid:
 --   000=brak  001=PC+1  010=SP+1  011=SP-1  100=AD+1  101=AD-1
 --
--- Mapa Sa (wybor rejestru adresowego):
+-- Mapa Sa:
 --   00=AD  01=PC  10=SP  11=ATMP
 -- =============================================================
 
 entity register_cpu is
     port (
         clk   : in  std_logic;
+        reset : in  std_logic;
         DI    : in  signed(15 downto 0);
         BA    : in  signed(15 downto 0);
         Sbb   : in  signed(3 downto 0);
@@ -63,8 +66,7 @@ end entity register_cpu;
 architecture rtl of register_cpu is
 begin
 
-    process (clk, Sbb, Sbc, Sa, DI)
-        -- Rejestry robocze 16-bit
+    process (clk, reset, Sbb, Sbc, Sa, DI)
         variable IR  : signed(15 downto 0) := (others => '0');
         variable TMP : signed(15 downto 0) := (others => '0');
         variable rA  : signed(15 downto 0) := (others => '0');
@@ -73,7 +75,6 @@ begin
         variable rD  : signed(15 downto 0) := (others => '0');
         variable rE  : signed(15 downto 0) := (others => '0');
         variable rF  : signed(15 downto 0) := (others => '0');
-        -- Rejestry adresowe 32-bit
         variable PC   : signed(31 downto 0) := (others => '0');
         variable SP   : signed(31 downto 0) := (others => '0');
         variable AD   : signed(31 downto 0) := (others => '0');
@@ -81,11 +82,27 @@ begin
     begin
 
         -- ====================================================
+        -- Reset asynchroniczny - zeruje wszystkie rejestry
+        -- ====================================================
+        if reset = '1' then
+            IR   := (others => '0');
+            TMP  := (others => '0');
+            rA   := (others => '0');
+            rB   := (others => '0');
+            rC   := (others => '0');
+            rD   := (others => '0');
+            rE   := (others => '0');
+            rF   := (others => '0');
+            PC   := (others => '0');
+            SP   := (others => '0');
+            AD   := (others => '0');
+            ATMP := (others => '0');
+
+        -- ====================================================
         -- Zapis synchroniczny (zbocze rosnace)
         -- ====================================================
-        if (clk'event and clk = '1') then
+        elsif (clk'event and clk = '1') then
 
-            -- Inkrementacja / dekrementacja rejestrów adresowych
             case Sid is
                 when "001" => PC   := PC   + 1;
                 when "010" => SP   := SP   + 1;
@@ -95,7 +112,6 @@ begin
                 when others => null;
             end case;
 
-            -- Zapis do wybranego rejestru
             case Sba is
                 when "0000" => IR               := BA;
                 when "0001" => TMP              := BA;
@@ -119,7 +135,7 @@ begin
         end if;
 
         -- ====================================================
-        -- Odczyt asynchroniczny - szyna BB (arg1 ALU)
+        -- Odczyt asynchroniczny - szyna BB
         -- ====================================================
         case Sbb is
             when "0000" => BB <= DI;
@@ -142,7 +158,7 @@ begin
         end case;
 
         -- ====================================================
-        -- Odczyt asynchroniczny - szyna BC (arg2 ALU)
+        -- Odczyt asynchroniczny - szyna BC
         -- ====================================================
         case Sbc is
             when "0000" => BC <= DI;
@@ -165,7 +181,7 @@ begin
         end case;
 
         -- ====================================================
-        -- Wyjscie adresowe (32-bit)
+        -- Wyjscie adresowe
         -- ====================================================
         case Sa is
             when "00" => ADR <= AD;
